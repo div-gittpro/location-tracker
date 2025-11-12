@@ -1,5 +1,6 @@
 # lt.py
-# 📍 Simple Location Tracker (Dashboard + Shareable Tracking Page)
+# 📍 Streamlit Cloud Deployable Location Tracker
+# Works globally with shareable HTTPS links
 
 import streamlit as st
 import pandas as pd
@@ -46,7 +47,7 @@ def get_reports():
 init_db()
 
 # ───────────────────────────────
-# Read query params
+# Read query parameters
 # ───────────────────────────────
 params = st.query_params.to_dict()
 token = params.get("token", "")
@@ -55,7 +56,7 @@ lon = params.get("lon", "")
 acc = params.get("acc", "")
 
 # ───────────────────────────────
-# Save incoming location if provided
+# Save incoming location data
 # ───────────────────────────────
 if token and lat and lon:
     save_report(token, float(lat), float(lon), float(acc) if acc else None)
@@ -63,12 +64,12 @@ if token and lat and lon:
     st.stop()
 
 # ───────────────────────────────
-# If token exists (shareable link opened)
+# Shareable tracking page
 # ───────────────────────────────
 if token and not (lat and lon):
     st.set_page_config(page_title="📍 Share Location", layout="centered")
     st.title("📍 Share Location")
-    st.write("Please allow location permission when prompted. Your location will be sent automatically.")
+    st.write("Please allow location access when prompted. Your GPS coordinates will be sent automatically.")
 
     js = f"""
     <script>
@@ -77,14 +78,16 @@ if token and not (lat and lon):
           document.body.innerHTML = "<h3>❌ Geolocation not supported.</h3>";
           return;
         }}
-        navigator.geolocation.getCurrentPosition(function(p) {{
-          const lat = p.coords.latitude;
-          const lon = p.coords.longitude;
-          const acc = p.coords.accuracy;
-          const url = window.location.origin + window.location.pathname +
+        navigator.geolocation.getCurrentPosition(function(pos) {{
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const acc = pos.coords.accuracy;
+          const target = window.location.origin + window.location.pathname +
               "?token={token}&lat=" + lat + "&lon=" + lon + "&acc=" + acc;
-          window.location.href = url;
-        }}, err => {{
+          fetch(target).then(() => {{
+              document.body.innerHTML = "<h3>✅ Location sent successfully!</h3><p>You can close this tab.</p>";
+          }});
+        }}, function(err) {{
           document.body.innerHTML = "<h3>❌ Error: " + err.message + "</h3>";
         }});
       }}
@@ -95,36 +98,44 @@ if token and not (lat and lon):
     st.stop()
 
 # ───────────────────────────────
-# Otherwise → Dashboard view
+# Dashboard view
 # ───────────────────────────────
 st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
 st.title("📍 Location Tracker Dashboard")
 
 st.markdown("""
-Generate a shareable link.  
-When someone opens it and allows location access, their coordinates appear below.
+Generate a **shareable link**.  
+When someone opens it and allows GPS access, their location will appear below.
 """)
 
-# Generate link
+# Generate shareable link
 if st.button("🔗 Generate New Link"):
     new_token = uuid.uuid4().hex[:10]
-    host = st.get_option("browser.serverAddress")
-    if "localhost" in host or "127.0.0.1" in host:
-        link = f"http://localhost:8501/?token={new_token}"
+    base_url = st.get_option("browser.serverAddress")
+
+    # Detect Streamlit Cloud URL
+    try:
+        base_url = st.runtime.get_instance()._get_browser_address()
+    except Exception:
+        pass
+
+    # Build correct HTTPS link
+    if "streamlit.app" in base_url:
+        link = f"https://{base_url}/?token={new_token}"
     else:
-        link = f"https://{host}/?token={new_token}"
+        link = f"{st.request.host_url}?token={new_token}" if hasattr(st, "request") else f"?token={new_token}"
+
     st.success("✅ Share this link:")
-    st.code(link, language="url")
+    st.code(f"https://{st.get_option('browser.gatherUsageStats') and base_url or 'yourappname.streamlit.app'}/?token={new_token}", language="url")
 
 st.divider()
 
-# Display reports
-st.subheader("📊 Received Reports")
+# Display received reports
+st.subheader("📊 Received Location Reports")
 
 df = get_reports()
 if df.empty:
-    st.info("No location data yet. Generate a link and open it on a phone to start tracking.")
+    st.info("No location data yet. Generate a link and share it to start tracking.")
 else:
     st.dataframe(df, use_container_width=True)
     st.map(df[["latitude", "longitude"]])
-
