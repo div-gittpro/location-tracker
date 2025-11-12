@@ -1,21 +1,5 @@
-# location_tracker_streamlit_only.py
-#
-# 📍 Location Tracker (Streamlit-only version — works on Streamlit Cloud)
-#
-# Usage:
-#   pip install streamlit pandas
-#   streamlit run location_tracker_streamlit_only.py
-#
-# Features:
-#   - Works on HTTPS (e.g., Streamlit Cloud)
-#   - Two modes:
-#       1. Dashboard (default): generate links & view reports
-#       2. Tracker: collects and reports geolocation
-#
-#   Example URLs:
-#   Dashboard → https://yourapp.streamlit.app/
-#   Tracker   → https://yourapp.streamlit.app/?mode=track&token=abc123
-#
+# lt.py
+# 📍 Streamlit-only Location Tracker (Cloud-compatible, HTTPS-ready)
 
 import streamlit as st
 import pandas as pd
@@ -24,15 +8,31 @@ import uuid
 from datetime import datetime
 
 # ────────────────────────────────────────────────────────────────
-# Initialize in-memory store
+# In-memory store
 # ────────────────────────────────────────────────────────────────
 if "reports" not in st.session_state:
-    st.session_state.reports = {}  # {token: [entries]}
+    st.session_state.reports = {}
 if "meta" not in st.session_state:
-    st.session_state.meta = {}     # {token: {label, created_at}}
+    st.session_state.meta = {}
 
 # ────────────────────────────────────────────────────────────────
-# Get query params (mode, token, lat, lon)
+# Helper: get app base URL safely
+# ────────────────────────────────────────────────────────────────
+def get_base_url():
+    try:
+        import streamlit.runtime.scriptrunner
+        ctx = streamlit.runtime.scriptrunner.get_script_run_ctx()
+        if ctx and ctx.session_id:
+            info = st.runtime.get_instance().get_client(ctx.session_id)
+            if info and "base_uri" in info:
+                return info["base_uri"]
+    except Exception:
+        pass
+    # fallback (works on Streamlit Cloud too)
+    return st.get_option("browser.serverAddress", "https://yourapp.streamlit.app")
+
+# ────────────────────────────────────────────────────────────────
+# Query params
 # ────────────────────────────────────────────────────────────────
 params = st.query_params.to_dict()
 mode = params.get("mode", "dashboard")
@@ -42,14 +42,13 @@ lon = params.get("lon", [""])[0] if isinstance(params.get("lon"), list) else par
 acc = params.get("acc", [""])[0] if isinstance(params.get("acc"), list) else params.get("acc", "")
 
 # ────────────────────────────────────────────────────────────────
-# MODE 1: TRACKER PAGE (for link visitors)
+# Mode: tracking link
 # ────────────────────────────────────────────────────────────────
 if mode == "track" and token:
     st.set_page_config(page_title="📍 Share Location", layout="centered")
     st.title("📍 Share your location")
     st.write("Please allow location permission when prompted.")
 
-    # Inject JS that gets user location and reloads with lat/lon in query
     js_code = f"""
     <script>
     function sendLocation() {{
@@ -73,7 +72,6 @@ if mode == "track" and token:
     """
     st.components.v1.html(js_code, height=0)
 
-    # If location is already in URL, record it
     if lat and lon:
         entry = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -91,14 +89,14 @@ if mode == "track" and token:
     st.stop()
 
 # ────────────────────────────────────────────────────────────────
-# MODE 2: DASHBOARD (default)
+# Mode: dashboard (default)
 # ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
 st.title("📍 Streamlit Location Tracker")
 
 st.markdown("""
-This app generates unique tracking links.  
-When someone opens a link and allows location access, their coordinates will appear below.
+Generate unique tracking links.  
+When someone opens one and allows location access, the data appears below.
 """)
 
 # Generate link
@@ -107,13 +105,22 @@ label = st.text_input("Label for this link (optional):")
 if st.button("Generate link"):
     token = uuid.uuid4().hex[:12]
     st.session_state.meta[token] = {"label": label, "created_at": datetime.utcnow().isoformat() + "Z"}
-    link = f"{st.request.url}?mode=track&token={token}"
+
+    # safely get base URL
+    base_url = st.get_option("browser.serverAddress")
+    if base_url.startswith("localhost"):
+        base_url = "http://localhost:8501"
+    else:
+        base_url = f"https://{st.get_option('browser.serverAddress')}"
+    
+    link = f"{base_url}/?mode=track&token={token}"
+
     st.success("✅ Link generated:")
     st.code(link, language="url")
 
 st.divider()
 
-# View reports
+# Reports
 st.subheader("Received Reports")
 tokens = list(st.session_state.meta.keys())
 if not tokens:
@@ -121,7 +128,6 @@ if not tokens:
 else:
     selected = st.selectbox("Select tracking token", tokens)
     reports = st.session_state.reports.get(selected, [])
-
     st.write(f"**Total {len(reports)} reports** for `{selected}`")
     if reports:
         df = pd.DataFrame(reports)
@@ -133,4 +139,3 @@ else:
 st.divider()
 with st.expander("Raw JSON data"):
     st.json(st.session_state.reports)
-
