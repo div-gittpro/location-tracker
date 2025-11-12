@@ -1,237 +1,136 @@
-# location_tracker_app.py
+# location_tracker_streamlit_only.py
 #
-# Streamlit + Flask Location Tracker
+# 📍 Location Tracker (Streamlit-only version — works on Streamlit Cloud)
+#
 # Usage:
-#   pip install -r requirements.txt
-#   streamlit run location_tracker_app.py
+#   pip install streamlit pandas
+#   streamlit run location_tracker_streamlit_only.py
 #
-# Notes:
-# - Works perfectly on localhost (browser will allow location).
-# - For sharing publicly, deploy using HTTPS (e.g. Streamlit Cloud).
+# Features:
+#   - Works on HTTPS (e.g., Streamlit Cloud)
+#   - Two modes:
+#       1. Dashboard (default): generate links & view reports
+#       2. Tracker: collects and reports geolocation
+#
+#   Example URLs:
+#   Dashboard → https://yourapp.streamlit.app/
+#   Tracker   → https://yourapp.streamlit.app/?mode=track&token=abc123
+#
 
 import streamlit as st
-from streamlit.components.v1 import html
-import threading
+import pandas as pd
 import time
 import uuid
-from datetime import datetime, timedelta
-import json
-from flask import Flask, request, Response
-from flask_cors import CORS
-import socket
-import pandas as pd
+from datetime import datetime
 
 # ────────────────────────────────────────────────────────────────
-# CONFIG
+# Initialize in-memory store
 # ────────────────────────────────────────────────────────────────
-FLASK_PORT = 5001
-PUBLIC_HOST = ""  # If deploying publicly, put your domain name here (e.g. "myapp.streamlit.app")
+if "reports" not in st.session_state:
+    st.session_state.reports = {}  # {token: [entries]}
+if "meta" not in st.session_state:
+    st.session_state.meta = {}     # {token: {label, created_at}}
 
 # ────────────────────────────────────────────────────────────────
-# Helper: Detect local IP (for LAN testing)
+# Get query params (mode, token, lat, lon)
 # ────────────────────────────────────────────────────────────────
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
-
-HOST = PUBLIC_HOST.strip() or get_local_ip()
+params = st.query_params.to_dict()
+mode = params.get("mode", "dashboard")
+token = params.get("token", [""])[0] if isinstance(params.get("token"), list) else params.get("token", "")
+lat = params.get("lat", [""])[0] if isinstance(params.get("lat"), list) else params.get("lat", "")
+lon = params.get("lon", [""])[0] if isinstance(params.get("lon"), list) else params.get("lon", "")
+acc = params.get("acc", [""])[0] if isinstance(params.get("acc"), list) else params.get("acc", "")
 
 # ────────────────────────────────────────────────────────────────
-# Shared memory for reports
+# MODE 1: TRACKER PAGE (for link visitors)
 # ────────────────────────────────────────────────────────────────
-reports = {}
-reports_lock = threading.Lock()
+if mode == "track" and token:
+    st.set_page_config(page_title="📍 Share Location", layout="centered")
+    st.title("📍 Share your location")
+    st.write("Please allow location permission when prompted.")
 
-# ────────────────────────────────────────────────────────────────
-# Flask setup
-# ────────────────────────────────────────────────────────────────
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
-
-@app.route("/track/<token>", methods=["GET"])
-def track_page(token):
-    """Serve HTML page to collect user's location"""
-    html_page = f"""
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8"/>
-    <title>Share Location</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-  </head>
-  <body style="font-family:sans-serif; text-align:center; margin-top:50px;">
-    <h2>📍 Share your location</h2>
-    <p id="status">Requesting permission…</p>
+    # Inject JS that gets user location and reloads with lat/lon in query
+    js_code = f"""
     <script>
-      const statusEl = document.getElementById('status');
-      function show(msg) {{ statusEl.innerText = msg; }}
-
-      function sendReport(data) {{
-        fetch('/report/{token}', {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify(data)
-        }}).then(r => {{
-          if (r.ok) show('✅ Location sent! You may close this tab.');
-          else show('❌ Failed to send location.');
-        }}).catch(err => show('⚠️ Network error: ' + err));
-      }}
-
-      if (!navigator.geolocation) {{
-        show('❌ Geolocation not supported by your browser.');
-      }} else {{
+    function sendLocation() {{
+        if (!navigator.geolocation) {{
+            document.body.innerHTML = "<h3>❌ Geolocation not supported.</h3>";
+            return;
+        }}
         navigator.geolocation.getCurrentPosition(function(pos) {{
-          const payload = {{
-            token: '{token}',
-            timestamp: new Date().toISOString(),
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            heading: pos.coords.heading,
-            speed: pos.coords.speed,
-            userAgent: navigator.userAgent
-          }};
-          show('Got location, sending...');
-          sendReport(payload);
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+            const acc = pos.coords.accuracy;
+            const newUrl = window.location.origin + window.location.pathname + 
+                "?mode=track&token={token}&lat=" + lat + "&lon=" + lon + "&acc=" + acc;
+            window.location.href = newUrl;
         }}, function(err) {{
-          show('❌ Permission denied or error: ' + err.message);
-        }}, {{
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
+            document.body.innerHTML = "<h3>❌ Permission denied: " + err.message + "</h3>";
         }});
-      }}
+    }}
+    sendLocation();
     </script>
-  </body>
-</html>
-"""
-    return Response(html_page, mimetype="text/html")
+    """
+    st.components.v1.html(js_code, height=0)
 
-@app.route("/report/<token>", methods=["POST"])
-def receive_report(token):
-    """Receive and store location data"""
-    try:
-        data = request.get_json(force=True)
-    except Exception as e:
-        return {"error": "Invalid JSON", "details": str(e)}, 400
+    # If location is already in URL, record it
+    if lat and lon:
+        entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "latitude": float(lat),
+            "longitude": float(lon),
+            "accuracy": float(acc) if acc else None
+        }
+        if token not in st.session_state.reports:
+            st.session_state.reports[token] = []
+        st.session_state.reports[token].append(entry)
 
-    entry = {
-        "received_at": datetime.utcnow().isoformat() + "Z",
-        "remote_addr": request.remote_addr,
-        "payload": data
-    }
-
-    with reports_lock:
-        reports.setdefault(token, []).append(entry)
-
-    return {"status": "ok"}, 200
-
-def run_flask():
-    app.run(host="0.0.0.0", port=FLASK_PORT, debug=False, use_reloader=False)
-
-def start_flask_in_thread():
-    t = threading.Thread(target=run_flask, daemon=True)
-    t.start()
-    time.sleep(0.7)
+        st.success("✅ Location sent successfully!")
+        st.json(entry)
+        st.markdown("You can close this page now.")
+    st.stop()
 
 # ────────────────────────────────────────────────────────────────
-# Streamlit UI
+# MODE 2: DASHBOARD (default)
 # ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="📍 Location Tracker", layout="wide")
-st.title("📍 Simple Location Tracker (Streamlit + Flask)")
+st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
+st.title("📍 Streamlit Location Tracker")
 
 st.markdown("""
-This app generates a **unique tracking link**.
-
-When someone opens the link and **allows location access**,  
-their latitude and longitude will be sent back and displayed below.
-
-> ⚠️ **Important:**  
-> Works only on `http://localhost` or secure `https://` origins.
+This app generates unique tracking links.  
+When someone opens a link and allows location access, their coordinates will appear below.
 """)
 
-# Start Flask only once
-if "flask_started" not in st.session_state:
-    start_flask_in_thread()
-    st.session_state.flask_started = True
-
-# ────────────────────────────────────────────────────────────────
-# Generate tracking link
-# ────────────────────────────────────────────────────────────────
+# Generate link
 st.subheader("Generate Tracking Link")
-
-name = st.text_input("Label for this link (optional):", value="")
-ttl_minutes = st.number_input("Expiry time (minutes, 0 = never):", min_value=0, value=60, step=10)
-
+label = st.text_input("Label for this link (optional):")
 if st.button("Generate link"):
     token = uuid.uuid4().hex[:12]
-    expires_at = None
-    if ttl_minutes > 0:
-        expires_at = (datetime.utcnow() + timedelta(minutes=int(ttl_minutes))).isoformat() + "Z"
-
-    with reports_lock:
-        reports.setdefault(token, [])
-
-    # Always use localhost for safer testing
-    link = f"http://localhost:{FLASK_PORT}/track/{token}"
-
-    st.success("✅ Link generated!")
+    st.session_state.meta[token] = {"label": label, "created_at": datetime.utcnow().isoformat() + "Z"}
+    link = f"{st.request.url}?mode=track&token={token}"
+    st.success("✅ Link generated:")
     st.code(link, language="url")
-
-    st.session_state[f"meta_{token}"] = {
-        "label": name,
-        "expires_at": expires_at,
-        "token": token
-    }
 
 st.divider()
 
-# ────────────────────────────────────────────────────────────────
-# Display received reports
-# ────────────────────────────────────────────────────────────────
+# View reports
 st.subheader("Received Reports")
-
-tokens = [st.session_state[key]["token"] for key in st.session_state if key.startswith("meta_")]
-
+tokens = list(st.session_state.meta.keys())
 if not tokens:
     st.info("No links generated yet.")
 else:
-    sel = st.selectbox("Select tracking token:", tokens)
-    with reports_lock:
-        token_reports = reports.get(sel, []).copy()
+    selected = st.selectbox("Select tracking token", tokens)
+    reports = st.session_state.reports.get(selected, [])
 
-    st.write(f"Total {len(token_reports)} report(s) for token `{sel}`")
-
-    if token_reports:
-        rows = []
-        for r in token_reports:
-            p = r["payload"]
-            rows.append({
-                "received_at": r["received_at"],
-                "remote_addr": r.get("remote_addr"),
-                "timestamp_from_client": p.get("timestamp"),
-                "latitude": p.get("latitude"),
-                "longitude": p.get("longitude"),
-                "accuracy(m)": p.get("accuracy"),
-                "userAgent": (p.get("userAgent") or "")[:100]
-            })
-        df = pd.DataFrame(rows)
+    st.write(f"**Total {len(reports)} reports** for `{selected}`")
+    if reports:
+        df = pd.DataFrame(reports)
         st.dataframe(df)
+        st.map(df[["latitude", "longitude"]].dropna())
+    else:
+        st.warning("No reports received yet for this token.")
 
-        # Map preview
-        try:
-            st.map(df[["latitude", "longitude"]].dropna())
-        except Exception:
-            st.warning("Map preview not available.")
-
-# Raw JSON (debug)
-with st.expander("Show raw JSON data"):
-    with reports_lock:
-        st.json(reports)
+st.divider()
+with st.expander("Raw JSON data"):
+    st.json(st.session_state.reports)
 
