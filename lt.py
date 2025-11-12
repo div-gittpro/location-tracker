@@ -165,7 +165,8 @@ with col1:
             expires_at = (datetime.utcnow() + timedelta(minutes=int(ttl_minutes))).isoformat() + "Z"
         with reports_lock:
             reports.setdefault(token, [])
-        link = f"http://{HOST}:{FLASK_PORT}/track/{token}"
+   link = f"http://localhost:{FLASK_PORT}/track/{token}"
+
         st.success("Link generated!")
         st.code(link, language="url")
         st.session_state[f"meta_{token}"] = {"label": name, "expires_at": expires_at, "token": token}
@@ -222,3 +223,4 @@ st.markdown("### Raw reports (debug)")
 with st.expander("Show raw JSON storage"):
     with reports_lock:
         st.json(reports)
+
