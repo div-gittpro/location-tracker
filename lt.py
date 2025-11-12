@@ -166,7 +166,6 @@ with col1:
         with reports_lock:
             reports.setdefault(token, [])
    link = f"http://localhost:{FLASK_PORT}/track/{token}"
-
         st.success("Link generated!")
         st.code(link, language="url")
         st.session_state[f"meta_{token}"] = {"label": name, "expires_at": expires_at, "token": token}
@@ -223,4 +222,5 @@ st.markdown("### Raw reports (debug)")
 with st.expander("Show raw JSON storage"):
     with reports_lock:
         st.json(reports)
+
 
