@@ -1,127 +1,130 @@
+# lt.py
+# 📍 Simple Location Tracker (Dashboard + Shareable Tracking Page)
+
 import streamlit as st
 import pandas as pd
 import uuid
+import sqlite3
 from datetime import datetime
 
-# ───────────────────────────────────────────────
-# In-memory storage
-# ───────────────────────────────────────────────
-if "reports" not in st.session_state:
-    st.session_state.reports = {}
-if "meta" not in st.session_state:
-    st.session_state.meta = {}
+DB_PATH = "locations.db"
 
-# ───────────────────────────────────────────────
-# Read query parameters
-# ───────────────────────────────────────────────
+# ───────────────────────────────
+# Database setup
+# ───────────────────────────────
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS reports (
+            token TEXT,
+            timestamp TEXT,
+            latitude REAL,
+            longitude REAL,
+            accuracy REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_report(token, lat, lon, acc):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO reports (token, timestamp, latitude, longitude, accuracy) VALUES (?, ?, ?, ?, ?)",
+        (token, datetime.utcnow().isoformat() + "Z", lat, lon, acc),
+    )
+    conn.commit()
+    conn.close()
+
+def get_reports():
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query("SELECT * FROM reports ORDER BY timestamp DESC", conn)
+    conn.close()
+    return df
+
+init_db()
+
+# ───────────────────────────────
+# Read query params
+# ───────────────────────────────
 params = st.query_params.to_dict()
-mode = params.get("mode", "dashboard")
-token = params.get("token", [""])[0] if isinstance(params.get("token"), list) else params.get("token", "")
-lat = params.get("lat", [""])[0] if isinstance(params.get("lat"), list) else params.get("lat", "")
-lon = params.get("lon", [""])[0] if isinstance(params.get("lon"), list) else params.get("lon", "")
-acc = params.get("acc", [""])[0] if isinstance(params.get("acc"), list) else params.get("acc", "")
+token = params.get("token", "")
+lat = params.get("lat", "")
+lon = params.get("lon", "")
+acc = params.get("acc", "")
 
-# ───────────────────────────────────────────────
-# Tracking Page (for visitors)
-# ───────────────────────────────────────────────
-if mode == "track" and token:
-    st.set_page_config(page_title="📍 Share Location", layout="centered")
-    st.title("📍 Share your location")
-    st.write("Please allow location permission when prompted.")
-
-    js_code = f"""
-    <script>
-    function sendLocation() {{
-        if (!navigator.geolocation) {{
-            document.body.innerHTML = "<h3>❌ Geolocation not supported.</h3>";
-            return;
-        }}
-        navigator.geolocation.getCurrentPosition(function(pos) {{
-            const lat = pos.coords.latitude;
-            const lon = pos.coords.longitude;
-            const acc = pos.coords.accuracy;
-            const newUrl = window.location.origin + window.location.pathname +
-                "?mode=track&token={token}&lat=" + lat + "&lon=" + lon + "&acc=" + acc;
-            window.location.href = newUrl;
-        }}, function(err) {{
-            document.body.innerHTML = "<h3>❌ Permission denied: " + err.message + "</h3>";
-        }});
-    }}
-    sendLocation();
-    </script>
-    """
-    st.components.v1.html(js_code, height=0)
-
-    if lat and lon:
-        entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "latitude": float(lat),
-            "longitude": float(lon),
-            "accuracy": float(acc) if acc else None
-        }
-        if token not in st.session_state.reports:
-            st.session_state.reports[token] = []
-        st.session_state.reports[token].append(entry)
-
-        st.success("✅ Location sent successfully!")
-        st.json(entry)
-        st.markdown("You can close this page now.")
+# ───────────────────────────────
+# Save incoming location if provided
+# ───────────────────────────────
+if token and lat and lon:
+    save_report(token, float(lat), float(lon), float(acc) if acc else None)
+    st.success("✅ Location sent successfully!")
     st.stop()
 
-# ───────────────────────────────────────────────
-# Dashboard Page (main app)
-# ───────────────────────────────────────────────
+# ───────────────────────────────
+# If token exists (shareable link opened)
+# ───────────────────────────────
+if token and not (lat and lon):
+    st.set_page_config(page_title="📍 Share Location", layout="centered")
+    st.title("📍 Share Location")
+    st.write("Please allow location permission when prompted. Your location will be sent automatically.")
+
+    js = f"""
+    <script>
+      function sendLocation() {{
+        if (!navigator.geolocation) {{
+          document.body.innerHTML = "<h3>❌ Geolocation not supported.</h3>";
+          return;
+        }}
+        navigator.geolocation.getCurrentPosition(function(p) {{
+          const lat = p.coords.latitude;
+          const lon = p.coords.longitude;
+          const acc = p.coords.accuracy;
+          const url = window.location.origin + window.location.pathname +
+              "?token={token}&lat=" + lat + "&lon=" + lon + "&acc=" + acc;
+          window.location.href = url;
+        }}, err => {{
+          document.body.innerHTML = "<h3>❌ Error: " + err.message + "</h3>";
+        }});
+      }}
+      sendLocation();
+    </script>
+    """
+    st.components.v1.html(js, height=0)
+    st.stop()
+
+# ───────────────────────────────
+# Otherwise → Dashboard view
+# ───────────────────────────────
 st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
-st.title("📍 Streamlit Location Tracker")
+st.title("📍 Location Tracker Dashboard")
 
 st.markdown("""
-Generate unique tracking links.  
-When someone opens one and allows location access, the coordinates appear here.
+Generate a shareable link.  
+When someone opens it and allows location access, their coordinates appear below.
 """)
 
-st.subheader("Generate Tracking Link")
-label = st.text_input("Label for this link (optional):")
-
-if st.button("Generate link"):
-    token = uuid.uuid4().hex[:12]
-    st.session_state.meta[token] = {
-        "label": label,
-        "created_at": datetime.utcnow().isoformat() + "Z"
-    }
-
-    # Build tracking link for both local and Streamlit Cloud use
-    base_url = st.get_option("browser.serverAddress")
-    if "localhost" in base_url or "127.0.0.1" in base_url:
-        link = f"http://localhost:8501/?mode=track&token={token}"
+# Generate link
+if st.button("🔗 Generate New Link"):
+    new_token = uuid.uuid4().hex[:10]
+    host = st.get_option("browser.serverAddress")
+    if "localhost" in host or "127.0.0.1" in host:
+        link = f"http://localhost:8501/?token={new_token}"
     else:
-        link = f"https://{base_url}/?mode=track&token={token}"
-
-    st.success("✅ Link generated:")
+        link = f"https://{host}/?token={new_token}"
+    st.success("✅ Share this link:")
     st.code(link, language="url")
 
 st.divider()
 
-# ───────────────────────────────────────────────
-# View Received Reports
-# ───────────────────────────────────────────────
-st.subheader("Received Reports")
-tokens = list(st.session_state.meta.keys())
+# Display reports
+st.subheader("📊 Received Reports")
 
-if not tokens:
-    st.info("No links generated yet.")
+df = get_reports()
+if df.empty:
+    st.info("No location data yet. Generate a link and open it on a phone to start tracking.")
 else:
-    selected = st.selectbox("Select tracking token", tokens)
-    reports = st.session_state.reports.get(selected, [])
-    st.write(f"**Total {len(reports)} report(s)** for `{selected}`")
-
-    if reports:
-        df = pd.DataFrame(reports)
-        st.dataframe(df)
-        st.map(df[["latitude", "longitude"]].dropna())
-    else:
-        st.warning("No reports received yet for this token.")
-
-st.divider()
-with st.expander("Raw JSON data"):
-    st.json(st.session_state.reports)
+    st.dataframe(df, use_container_width=True)
+    st.map(df[["latitude", "longitude"]])
 
