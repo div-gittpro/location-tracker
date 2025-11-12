@@ -1,13 +1,10 @@
-# lt.py
-# 📍 Streamlit-only Location Tracker (Cloud-compatible, HTTPS-ready)
-
 import streamlit as st
 import pandas as pd
 import uuid
 from datetime import datetime
 
 # ───────────────────────────────────────────────
-# In-memory store
+# In-memory storage
 # ───────────────────────────────────────────────
 if "reports" not in st.session_state:
     st.session_state.reports = {}
@@ -15,7 +12,7 @@ if "meta" not in st.session_state:
     st.session_state.meta = {}
 
 # ───────────────────────────────────────────────
-# Query parameters
+# Read query parameters
 # ───────────────────────────────────────────────
 params = st.query_params.to_dict()
 mode = params.get("mode", "dashboard")
@@ -25,7 +22,7 @@ lon = params.get("lon", [""])[0] if isinstance(params.get("lon"), list) else par
 acc = params.get("acc", [""])[0] if isinstance(params.get("acc"), list) else params.get("acc", "")
 
 # ───────────────────────────────────────────────
-# Mode: tracking link
+# Tracking Page (for visitors)
 # ───────────────────────────────────────────────
 if mode == "track" and token:
     st.set_page_config(page_title="📍 Share Location", layout="centered")
@@ -60,7 +57,7 @@ if mode == "track" and token:
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "latitude": float(lat),
             "longitude": float(lon),
-            "accuracy": float(acc) if acc else None,
+            "accuracy": float(acc) if acc else None
         }
         if token not in st.session_state.reports:
             st.session_state.reports[token] = []
@@ -72,17 +69,16 @@ if mode == "track" and token:
     st.stop()
 
 # ───────────────────────────────────────────────
-# Mode: dashboard (default)
+# Dashboard Page (main app)
 # ───────────────────────────────────────────────
 st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
 st.title("📍 Streamlit Location Tracker")
 
 st.markdown("""
 Generate unique tracking links.  
-When someone opens one and allows location access, the data appears below.
+When someone opens one and allows location access, the coordinates appear here.
 """)
 
-# Generate link
 st.subheader("Generate Tracking Link")
 label = st.text_input("Label for this link (optional):")
 
@@ -90,25 +86,24 @@ if st.button("Generate link"):
     token = uuid.uuid4().hex[:12]
     st.session_state.meta[token] = {
         "label": label,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.utcnow().isoformat() + "Z"
     }
 
-    # Build link (works on local or Streamlit Cloud)
-    base_url = "http://localhost:8501"
-    try:
-        base = st.get_option("browser.serverAddress")
-        if not base.startswith("localhost"):
-            base_url = f"https://{base}"
-    except Exception:
-        pass
+    # Build tracking link for both local and Streamlit Cloud use
+    base_url = st.get_option("browser.serverAddress")
+    if "localhost" in base_url or "127.0.0.1" in base_url:
+        link = f"http://localhost:8501/?mode=track&token={token}"
+    else:
+        link = f"https://{base_url}/?mode=track&token={token}"
 
-    link = f"{base_url}/?mode=track&token={token}"
     st.success("✅ Link generated:")
     st.code(link, language="url")
 
 st.divider()
 
-# View reports
+# ───────────────────────────────────────────────
+# View Received Reports
+# ───────────────────────────────────────────────
 st.subheader("Received Reports")
 tokens = list(st.session_state.meta.keys())
 
@@ -117,7 +112,7 @@ if not tokens:
 else:
     selected = st.selectbox("Select tracking token", tokens)
     reports = st.session_state.reports.get(selected, [])
-    st.write(f"**Total {len(reports)} reports** for `{selected}`")
+    st.write(f"**Total {len(reports)} report(s)** for `{selected}`")
 
     if reports:
         df = pd.DataFrame(reports)
