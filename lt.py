@@ -1,6 +1,6 @@
 # lt.py
-# 📍 Streamlit Cloud Deployable Location Tracker
-# Works globally with shareable HTTPS links
+# 📍 Streamlit Deployable Location Tracker
+# Works globally via HTTPS (Streamlit Cloud) or locally for testing.
 
 import streamlit as st
 import pandas as pd
@@ -56,7 +56,7 @@ lon = params.get("lon", "")
 acc = params.get("acc", "")
 
 # ───────────────────────────────
-# Save incoming location data
+# Save incoming GPS data
 # ───────────────────────────────
 if token and lat and lon:
     save_report(token, float(lat), float(lon), float(acc) if acc else None)
@@ -64,12 +64,12 @@ if token and lat and lon:
     st.stop()
 
 # ───────────────────────────────
-# Shareable tracking page
+# Shareable tracking page (visitor)
 # ───────────────────────────────
 if token and not (lat and lon):
     st.set_page_config(page_title="📍 Share Location", layout="centered")
     st.title("📍 Share Location")
-    st.write("Please allow location access when prompted. Your GPS coordinates will be sent automatically.")
+    st.write("Please allow location permission when prompted. Your GPS coordinates will be sent automatically.")
 
     js = f"""
     <script>
@@ -98,39 +98,42 @@ if token and not (lat and lon):
     st.stop()
 
 # ───────────────────────────────
-# Dashboard view
+# Dashboard (default admin view)
 # ───────────────────────────────
 st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
 st.title("📍 Location Tracker Dashboard")
 
 st.markdown("""
-Generate a **shareable link**.  
+Generate a **shareable tracking link**.  
 When someone opens it and allows GPS access, their location will appear below.
 """)
 
-# Generate shareable link
+# ────────────── Generate shareable link ──────────────
 if st.button("🔗 Generate New Link"):
     new_token = uuid.uuid4().hex[:10]
-    base_url = st.get_option("browser.serverAddress")
 
-    # Detect Streamlit Cloud URL
-    try:
-        base_url = st.runtime.get_instance()._get_browser_address()
-    except Exception:
-        pass
+    # Detect Streamlit Cloud public URL dynamically
+    base_url = st.experimental_get_query_params().get("base", [""])[0]
+    if not base_url:
+        try:
+            ctx = st.context if hasattr(st, "context") else None
+            if ctx and hasattr(ctx, "browser"):
+                base_url = ctx.browser.server_url
+        except Exception:
+            pass
 
-    # Build correct HTTPS link
-    if "streamlit.app" in base_url:
-        link = f"https://{base_url}/?token={new_token}"
-    else:
-        link = f"{st.request.host_url}?token={new_token}" if hasattr(st, "request") else f"?token={new_token}"
+    # Fallback: default to your Streamlit Cloud domain (replace below)
+    if not base_url or "localhost" in base_url:
+        base_url = "https://location-tracker-yourusername.streamlit.app"  # 🔹 change this to your app name
 
-    st.success("✅ Share this link:")
-    st.code(f"https://{st.get_option('browser.gatherUsageStats') and base_url or 'yourappname.streamlit.app'}/?token={new_token}", language="url")
+    link = f"{base_url}/?token={new_token}"
+
+    st.success("✅ Share this public tracking link:")
+    st.code(link, language="url")
 
 st.divider()
 
-# Display received reports
+# ────────────── Display received reports ──────────────
 st.subheader("📊 Received Location Reports")
 
 df = get_reports()
@@ -139,3 +142,4 @@ if df.empty:
 else:
     st.dataframe(df, use_container_width=True)
     st.map(df[["latitude", "longitude"]])
+
