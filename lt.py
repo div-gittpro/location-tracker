@@ -3,37 +3,20 @@
 
 import streamlit as st
 import pandas as pd
-import time
 import uuid
 from datetime import datetime
 
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # In-memory store
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
 if "reports" not in st.session_state:
     st.session_state.reports = {}
 if "meta" not in st.session_state:
     st.session_state.meta = {}
 
-# ────────────────────────────────────────────────────────────────
-# Helper: get app base URL safely
-# ────────────────────────────────────────────────────────────────
-def get_base_url():
-    try:
-        import streamlit.runtime.scriptrunner
-        ctx = streamlit.runtime.scriptrunner.get_script_run_ctx()
-        if ctx and ctx.session_id:
-            info = st.runtime.get_instance().get_client(ctx.session_id)
-            if info and "base_uri" in info:
-                return info["base_uri"]
-    except Exception:
-        pass
-    # fallback (works on Streamlit Cloud too)
-    return st.get_option("browser.serverAddress", "https://yourapp.streamlit.app")
-
-# ────────────────────────────────────────────────────────────────
-# Query params
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
+# Query parameters
+# ───────────────────────────────────────────────
 params = st.query_params.to_dict()
 mode = params.get("mode", "dashboard")
 token = params.get("token", [""])[0] if isinstance(params.get("token"), list) else params.get("token", "")
@@ -41,9 +24,9 @@ lat = params.get("lat", [""])[0] if isinstance(params.get("lat"), list) else par
 lon = params.get("lon", [""])[0] if isinstance(params.get("lon"), list) else params.get("lon", "")
 acc = params.get("acc", [""])[0] if isinstance(params.get("acc"), list) else params.get("acc", "")
 
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Mode: tracking link
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
 if mode == "track" and token:
     st.set_page_config(page_title="📍 Share Location", layout="centered")
     st.title("📍 Share your location")
@@ -60,7 +43,7 @@ if mode == "track" and token:
             const lat = pos.coords.latitude;
             const lon = pos.coords.longitude;
             const acc = pos.coords.accuracy;
-            const newUrl = window.location.origin + window.location.pathname + 
+            const newUrl = window.location.origin + window.location.pathname +
                 "?mode=track&token={token}&lat=" + lat + "&lon=" + lon + "&acc=" + acc;
             window.location.href = newUrl;
         }}, function(err) {{
@@ -77,7 +60,7 @@ if mode == "track" and token:
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "latitude": float(lat),
             "longitude": float(lon),
-            "accuracy": float(acc) if acc else None
+            "accuracy": float(acc) if acc else None,
         }
         if token not in st.session_state.reports:
             st.session_state.reports[token] = []
@@ -88,9 +71,9 @@ if mode == "track" and token:
         st.markdown("You can close this page now.")
     st.stop()
 
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
 # Mode: dashboard (default)
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
 st.set_page_config(page_title="📍 Location Tracker Dashboard", layout="wide")
 st.title("📍 Streamlit Location Tracker")
 
@@ -102,33 +85,40 @@ When someone opens one and allows location access, the data appears below.
 # Generate link
 st.subheader("Generate Tracking Link")
 label = st.text_input("Label for this link (optional):")
+
 if st.button("Generate link"):
     token = uuid.uuid4().hex[:12]
-    st.session_state.meta[token] = {"label": label, "created_at": datetime.utcnow().isoformat() + "Z"}
+    st.session_state.meta[token] = {
+        "label": label,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
 
-    # safely get base URL
-    base_url = st.get_option("browser.serverAddress")
-    if base_url.startswith("localhost"):
-        base_url = "http://localhost:8501"
-    else:
-        base_url = f"https://{st.get_option('browser.serverAddress')}"
-    
+    # Build link (works on local or Streamlit Cloud)
+    base_url = "http://localhost:8501"
+    try:
+        base = st.get_option("browser.serverAddress")
+        if not base.startswith("localhost"):
+            base_url = f"https://{base}"
+    except Exception:
+        pass
+
     link = f"{base_url}/?mode=track&token={token}"
-
     st.success("✅ Link generated:")
     st.code(link, language="url")
 
 st.divider()
 
-# Reports
+# View reports
 st.subheader("Received Reports")
 tokens = list(st.session_state.meta.keys())
+
 if not tokens:
     st.info("No links generated yet.")
 else:
     selected = st.selectbox("Select tracking token", tokens)
     reports = st.session_state.reports.get(selected, [])
     st.write(f"**Total {len(reports)} reports** for `{selected}`")
+
     if reports:
         df = pd.DataFrame(reports)
         st.dataframe(df)
@@ -139,3 +129,4 @@ else:
 st.divider()
 with st.expander("Raw JSON data"):
     st.json(st.session_state.reports)
+
